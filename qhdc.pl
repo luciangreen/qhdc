@@ -268,10 +268,14 @@ qhdc_complete_instance(InstanceId) :-
 
 qhdc_delete_instance(InstanceId) :-
     set_instance_state(InstanceId, deleted, time(0,cleanup)),
+    retractall(qhdc_instance(InstanceId,_,_,_,_,_,_,_,_)),
     retractall(instance_goal(InstanceId,_)),
     retractall(instance_goal_template(InstanceId,_)),
     retractall(instance_execution(InstanceId,_)),
-    retractall(instance_status(InstanceId,_)).
+    retractall(instance_code_ref(InstanceId,_,_)),
+    retractall(instance_status(InstanceId,_)),
+    retractall(depends(InstanceId,_,_)),
+    retractall(depends(_,InstanceId,_)).
 
 update_output_bindings(InstanceId, Goal) :-
     qhdc_instance(InstanceId, Parent, Predicate, Arguments, Inputs, Outputs0, State0, Time0, Metadata),
@@ -304,9 +308,10 @@ transfer_from_instance(ProducerId) :-
            transfer_parameter(ProducerId, ConsumerId, Parameter)).
 
 transfer_parameter(Source, Destination, Parameter) :-
-    qhdc_instance(Source, _Parent, _Predicate, _Args, _Inputs, Outputs, _State, _Time, _Meta),
-    member(Parameter-Value, Outputs),
     ( qhdc_instance(Source, _, _, _, _, _, completed, _, _) ->
+        qhdc_instance(Source, _Parent, _Predicate, _Args, _Inputs,
+                      Outputs, _State, _Time, _Meta),
+        member(Parameter-Value, Outputs),
         qhdc_transfer(Source, Destination, Parameter, Value, time(0,transfer), _)
     ; assertz(causality_error(causality_violation(Source, Destination, Parameter))),
       fail
@@ -408,10 +413,40 @@ hash_code(Code, Hash) :-
 
 qhdc_serialize_instance(InstanceId, Serialized) :-
     qhdc_instance(InstanceId, Parent, Predicate, Arguments, Inputs, Outputs, State, LogicalTime, Metadata),
-    Serialized = qhdc_instance(InstanceId, Parent, Predicate, Arguments, Inputs, Outputs, State, LogicalTime, Metadata).
+    Instance = qhdc_instance(InstanceId, Parent, Predicate, Arguments, Inputs,
+                              Outputs, State, LogicalTime, Metadata),
+    ( instance_goal(InstanceId, Goal) -> copy_term(Goal, SavedGoal) ; SavedGoal = none ),
+    ( instance_goal_template(InstanceId, Template) ->
+        copy_term(Template, SavedTemplate)
+    ; SavedTemplate = none
+    ),
+    ( instance_execution(InstanceId, ExecutionId) -> true ; ExecutionId = none ),
+    findall(Template-Version, instance_code_ref(InstanceId, Template, Version), CodeRefs),
+    Serialized = qhdc_checkpoint(Instance, SavedGoal, SavedTemplate,
+                                 ExecutionId, CodeRefs).
 
-qhdc_restore_instance(Serialized) :-
-    Serialized = qhdc_instance(InstanceId, Parent, Predicate, Arguments, Inputs, Outputs, State, LogicalTime, Metadata),
+qhdc_restore_instance(qhdc_checkpoint(Instance, Goal, GoalTemplate,
+                                      ExecutionId, CodeRefs)) :-
+    !,
+    restore_instance_record(Instance),
+    Instance = qhdc_instance(InstanceId, _, _, _, _, _, _, _, _),
+    ( Goal == none -> true ; assertz(instance_goal(InstanceId, Goal)) ),
+    ( GoalTemplate == none ->
+        true
+    ; assertz(instance_goal_template(InstanceId, GoalTemplate))
+    ),
+    ( ExecutionId == none ->
+        true
+    ; assertz(instance_execution(InstanceId, ExecutionId))
+    ),
+    forall(member(Template-Version, CodeRefs),
+           assertz(instance_code_ref(InstanceId, Template, Version))).
+qhdc_restore_instance(Instance) :-
+    restore_instance_record(Instance).
+
+restore_instance_record(Serialized) :-
+    Serialized = qhdc_instance(InstanceId, Parent, Predicate, Arguments,
+                               Inputs, Outputs, State, LogicalTime, Metadata),
     ( qhdc_instance(InstanceId,_,_,_,_,_,_,_,_) -> true
     ; assertz(qhdc_instance(InstanceId, Parent, Predicate, Arguments, Inputs, Outputs, State, LogicalTime, Metadata)),
       assertz(instance_status(InstanceId, State))
