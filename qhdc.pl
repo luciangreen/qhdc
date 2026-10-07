@@ -261,7 +261,10 @@ qhdc_run_instance(InstanceId) :-
     run_instance_goal(InstanceId, Goal).
 
 qhdc_complete_instance(InstanceId) :-
-    set_instance_state(InstanceId, completed, time(0,complete)),
+    complete_instance_at(InstanceId, 0).
+
+complete_instance_at(InstanceId, Tick) :-
+    set_instance_state(InstanceId, completed, time(Tick,complete)),
     qhdc_instance(InstanceId, _Parent, _Predicate, _Arguments, _Inputs,
                   Outputs, _State, LogicalTime, _Metadata),
     assertz(commit(InstanceId, Outputs, metadata{logical_time:LogicalTime})).
@@ -277,7 +280,7 @@ qhdc_delete_instance(InstanceId) :-
     retractall(depends(InstanceId,_,_)),
     retractall(depends(_,InstanceId,_)).
 
-update_output_bindings(InstanceId, Goal) :-
+update_output_bindings(InstanceId, Goal, Tick) :-
     qhdc_instance(InstanceId, Parent, Predicate, Arguments, Inputs, Outputs0, State0, Time0, Metadata),
     goal_arguments(Goal, CurrentArgs),
     Metadata = metadata{outputs:OutputInfo},
@@ -287,7 +290,8 @@ update_output_bindings(InstanceId, Goal) :-
             ),
             Outputs),
     retract(qhdc_instance(InstanceId, Parent, Predicate, Arguments, Inputs, Outputs0, State0, Time0, Metadata)),
-    assertz(qhdc_instance(InstanceId, Parent, Predicate, Arguments, Inputs, Outputs, running, time(0,produce), Metadata)).
+    assertz(qhdc_instance(InstanceId, Parent, Predicate, Arguments, Inputs,
+                          Outputs, running, time(Tick,produce), Metadata)).
 
 goal_arguments(_Module:PlainGoal, Args) :-
     !,
@@ -458,6 +462,7 @@ state_at(LogicalTime, state(Instances, Events)) :-
 
 run_from(LogicalTime, InstanceId, Result) :-
     valid_logical_time(LogicalTime),
+    execution_tick_after(LogicalTime, Tick),
     instance_goal_template(InstanceId, GoalTemplate),
     copy_term(GoalTemplate, Goal),
     qhdc_instance(InstanceId, Parent, Predicate, Arguments, Inputs,
@@ -468,24 +473,37 @@ run_from(LogicalTime, InstanceId, Result) :-
                           [], runnable, LogicalTime, Metadata)),
     retractall(instance_status(InstanceId, _)),
     assertz(instance_status(InstanceId, runnable)),
-    run_instance_goal(InstanceId, Goal),
-    qhdc_complete_instance(InstanceId),
+    record_event(LogicalTime, InstanceId, runnable, Predicate),
+    run_instance_goal_at(InstanceId, Goal, Tick),
+    complete_instance_at(InstanceId, Tick),
     qhdc_instance(InstanceId, _, _, _, _, Outputs, _, _, _),
     Result = Outputs.
 
 valid_logical_time(time(Tick, Phase)) :-
     number(Tick),
+    Tick >= 0,
     phase_order(Phase, _).
 
 run_instance_goal(InstanceId, Goal) :-
-    set_instance_state(InstanceId, running, time(0,execute)),
+    run_instance_goal_at(InstanceId, Goal, 0).
+
+execution_tick_after(time(Tick, Phase), ExecutionTick) :-
+    phase_order(Phase, AnchorOrder),
+    phase_order(execute, ExecuteOrder),
+    ( AnchorOrder =< ExecuteOrder ->
+        ExecutionTick = Tick
+    ; ExecutionTick is Tick + 1
+    ).
+
+run_instance_goal_at(InstanceId, Goal, Tick) :-
+    set_instance_state(InstanceId, running, time(Tick,execute)),
     ( call(Goal) ->
-        update_output_bindings(InstanceId, Goal),
-        set_instance_state(InstanceId, running, time(0,produce)),
-        record_event(time(0,produce), InstanceId, produced, Goal)
+        update_output_bindings(InstanceId, Goal, Tick),
+        set_instance_state(InstanceId, running, time(Tick,produce)),
+        record_event(time(Tick,produce), InstanceId, produced, Goal)
     ; assertz(instance_failed(InstanceId, goal_failed)),
-      record_event(time(0,execute), InstanceId, failed, Goal),
-      set_instance_state(InstanceId, failed, time(0,execute)),
+      record_event(time(Tick,execute), InstanceId, failed, Goal),
+      set_instance_state(InstanceId, failed, time(Tick,execute)),
       fail
     ).
 

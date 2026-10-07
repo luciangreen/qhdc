@@ -101,6 +101,12 @@ test(serialize_restore_instance, [setup(setup_qhdc)]) :-
     qhdc_instance(First,_,_,_,_,_,_,_,_),
     run_from(time(0,execute), First, [v(1)-4]).
 
+test(run_from_later_anchor, [setup(setup_qhdc)]) :-
+    qhdc_compile(plunit_qhdc:double(2,_), Exec),
+    qhdc:execution_instances(Exec, [InstanceId]),
+    run_from(time(0,produce), InstanceId, [v(1)-4]),
+    qhdc_instance(InstanceId, _, _, _, _, _, completed, time(1,complete), _).
+
 test(logical_and_wall_duration, [setup(setup_qhdc)]) :-
     qhdc_run(plunit_qhdc:pipeline(2,_), Result),
     get_dict(execution, Result, ExecutionId),
