@@ -432,19 +432,22 @@ qhdc_serialize_instance(InstanceId, Serialized) :-
 qhdc_restore_instance(qhdc_checkpoint(Instance, Goal, GoalTemplate,
                                       ExecutionId, CodeRefs)) :-
     !,
-    restore_instance_record(Instance),
     Instance = qhdc_instance(InstanceId, _, _, _, _, _, _, _, _),
-    ( Goal == none -> true ; assertz(instance_goal(InstanceId, Goal)) ),
-    ( GoalTemplate == none ->
+    ( qhdc_instance(InstanceId, _, _, _, _, _, _, _, _) ->
         true
-    ; assertz(instance_goal_template(InstanceId, GoalTemplate))
-    ),
-    ( ExecutionId == none ->
-        true
-    ; assertz(instance_execution(InstanceId, ExecutionId))
-    ),
-    forall(member(Template-Version, CodeRefs),
-           assertz(instance_code_ref(InstanceId, Template, Version))).
+    ; restore_instance_record(Instance),
+      ( Goal == none -> true ; assertz(instance_goal(InstanceId, Goal)) ),
+      ( GoalTemplate == none ->
+          true
+      ; assertz(instance_goal_template(InstanceId, GoalTemplate))
+      ),
+      ( ExecutionId == none ->
+          true
+      ; assertz(instance_execution(InstanceId, ExecutionId))
+      ),
+      forall(member(Template-Version, CodeRefs),
+             assertz(instance_code_ref(InstanceId, Template, Version)))
+    ).
 qhdc_restore_instance(Instance) :-
     restore_instance_record(Instance).
 
@@ -466,9 +469,9 @@ run_from(LogicalTime, InstanceId, Result) :-
     instance_goal_template(InstanceId, GoalTemplate),
     copy_term(GoalTemplate, Goal),
     qhdc_instance(InstanceId, Parent, Predicate, Arguments, Inputs,
-                  _OldOutputs, _State, _OldTime, Metadata),
+                  OldOutputs, OldState, OldTime, Metadata),
     retract(qhdc_instance(InstanceId, Parent, Predicate, Arguments, Inputs,
-                          _OldOutputs, _State, _OldTime, Metadata)),
+                          OldOutputs, OldState, OldTime, Metadata)),
     assertz(qhdc_instance(InstanceId, Parent, Predicate, Arguments, Inputs,
                           [], runnable, LogicalTime, Metadata)),
     retractall(instance_status(InstanceId, _)),

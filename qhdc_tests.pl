@@ -108,7 +108,7 @@ test(run_from_later_anchor, [setup(setup_qhdc)]) :-
     qhdc_instance(InstanceId, _, _, _, _, _, completed, time(1,complete), _).
 
 test(logical_and_wall_duration, [setup(setup_qhdc)]) :-
-    qhdc_run(plunit_qhdc:pipeline(2,_), Result),
+    qhdc_run(plunit_qhdc:double(2,_), Result),
     get_dict(execution, Result, ExecutionId),
     qhdc_logical_duration(ExecutionId, 6),
     simulation_wall_time(ExecutionId, Wall),
@@ -119,8 +119,8 @@ test(completion_commits, [setup(setup_qhdc)]) :-
     commit(_, [v(1)-6], metadata{logical_time:time(0,complete)}).
 
 test(out_of_order_transfer_causality_fact, [setup(setup_qhdc)]) :-
-    qhdc_compile(plunit_qhdc:pipeline(2,_), Exec),
-    qhdc:execution_instances(Exec, [_,Producer|_]),
+    qhdc_compile(plunit_qhdc:(double(2,Intermediate),add_one(Intermediate,_)), Exec),
+    qhdc:execution_instances(Exec, [Producer,_]),
     qhdc:depends(Consumer, Producer, Parameter),
     \+ qhdc:transfer_parameter(Producer, Consumer, Parameter),
     causality_error(causality_violation(Producer, Consumer, Parameter)).
