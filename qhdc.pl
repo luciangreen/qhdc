@@ -60,6 +60,7 @@
 
 :- dynamic qhdc_instance/9.
 :- dynamic instance_goal/2.
+:- dynamic instance_goal_template/2.
 :- dynamic instance_execution/2.
 :- dynamic instance_code_ref/3.
 :- dynamic instance_status/2.
@@ -95,6 +96,7 @@ qhdc_trace(Mode) :-
 qhdc_reset :-
     retractall(qhdc_instance(_,_,_,_,_,_,_,_,_)),
     retractall(instance_goal(_,_)),
+    retractall(instance_goal_template(_,_)),
     retractall(instance_execution(_,_)),
     retractall(instance_code_ref(_,_,_)),
     retractall(instance_status(_,_)),
@@ -142,7 +144,6 @@ build_instances(ExecutionId, Goals, OriginalGoal) :-
 build_instances_([], _, _, _, Acc, Acc).
 build_instances_([Goal|Rest], Parent, ExecutionId, Vars, Acc0, Acc) :-
     qhdc_create_instance(Parent, Goal, Vars, InstanceId),
-    assertz(instance_goal(InstanceId, Goal)),
     assertz(instance_execution(InstanceId, ExecutionId)),
     append(Acc0, [InstanceId], Acc1),
     build_instances_(Rest, InstanceId, ExecutionId, Vars, Acc1, Acc).
@@ -170,6 +171,9 @@ qhdc_create_instance(ParentId, Goal, Vars, InstanceId) :-
     State = created,
     LogicalTime = time(0,create),
     assertz(qhdc_instance(InstanceId, ParentId, Predicate, Arguments, InputBindings, [], State, LogicalTime, metadata{outputs:OutputInfo})),
+    copy_term(Goal, GoalTemplate),
+    assertz(instance_goal(InstanceId, Goal)),
+    assertz(instance_goal_template(InstanceId, GoalTemplate)),
     assertz(instance_status(InstanceId, created)),
     record_event(LogicalTime, InstanceId, created, Goal).
 
@@ -219,16 +223,14 @@ shared_variable(G1, G2, Vars, v(Id)) :-
 
 qhdc_run(Goal, Result) :-
     strip_module(Goal, Module, PlainGoal),
-    statistics(walltime, [Start,_]),
+    get_time_seconds(time(0,execute), Start),
     qhdc_compile_goal(Module, PlainGoal, ExecutionId),
-    get_time_seconds(time(0,execute), T0),
-    assertz(execution_started(ExecutionId, T0)),
+    assertz(execution_started(ExecutionId, Start)),
     run_execution_instances(ExecutionId),
-    get_time_seconds(time(0,complete), T1),
-    assertz(execution_finished(ExecutionId, T1)),
+    get_time_seconds(time(0,complete), Finish),
+    assertz(execution_finished(ExecutionId, Finish)),
     qhdc_collect_result(ExecutionId, Result),
-    statistics(walltime, [End,_]),
-    Wall is End-Start,
+    Wall is Finish-Start,
     record_event(time(0,complete), ExecutionId, simulation_wall_time, Wall).
 
 run_execution_instances(ExecutionId) :-
@@ -255,23 +257,19 @@ qhdc_load_instance(InstanceId) :-
     set_instance_state(InstanceId, runnable, time(0,continue)).
 
 qhdc_run_instance(InstanceId) :-
-    set_instance_state(InstanceId, running, time(0,execute)),
     instance_goal(InstanceId, Goal),
-    ( call(Goal) ->
-        update_output_bindings(InstanceId, Goal),
-        set_instance_state(InstanceId, running, time(0,produce)),
-        record_event(time(0,produce), InstanceId, produced, Goal)
-    ; assertz(instance_failed(InstanceId, goal_failed)),
-      record_event(time(0,execute), InstanceId, failed, Goal),
-      fail
-    ).
+    run_instance_goal(InstanceId, Goal).
 
 qhdc_complete_instance(InstanceId) :-
-    set_instance_state(InstanceId, completed, time(0,complete)).
+    set_instance_state(InstanceId, completed, time(0,complete)),
+    qhdc_instance(InstanceId, _Parent, _Predicate, _Arguments, _Inputs,
+                  Outputs, _State, LogicalTime, _Metadata),
+    assertz(commit(InstanceId, Outputs, metadata{logical_time:LogicalTime})).
 
 qhdc_delete_instance(InstanceId) :-
     set_instance_state(InstanceId, deleted, time(0,cleanup)),
     retractall(instance_goal(InstanceId,_)),
+    retractall(instance_goal_template(InstanceId,_)),
     retractall(instance_execution(InstanceId,_)),
     retractall(instance_status(InstanceId,_)).
 
@@ -308,7 +306,11 @@ transfer_from_instance(ProducerId) :-
 transfer_parameter(Source, Destination, Parameter) :-
     qhdc_instance(Source, _Parent, _Predicate, _Args, _Inputs, Outputs, _State, _Time, _Meta),
     member(Parameter-Value, Outputs),
-    qhdc_transfer(Source, Destination, Parameter, Value, time(0,transfer), _).
+    ( qhdc_instance(Source, _, _, _, _, _, completed, _, _) ->
+        qhdc_transfer(Source, Destination, Parameter, Value, time(0,transfer), _)
+    ; assertz(causality_error(causality_violation(Source, Destination, Parameter))),
+      fail
+    ).
 
 qhdc_transfer(Source, Destination, ParameterId, Value, LogicalTime, PacketId) :-
     qhdc_make_packet(Source, Destination, ParameterId, Value, LogicalTime, PacketId, Packet),
@@ -374,17 +376,27 @@ aether_unregister(CodeId) :-
     retractall(registered_code(CodeId,_,_,_)).
 
 aether_lookup(CodeId, Code) :-
-    registered_code(CodeId, _Version, _Hash, Code),
-    !.
-aether_lookup(CodeId, _) :-
-    assertz(code_lookup_failed(CodeId)),
-    fail.
+    ( latest_registered_code(CodeId, _Version, _Hash, Code) ->
+        true
+    ;
+        assertz(code_lookup_failed(CodeId)),
+        fail
+    ).
 
 aether_run(CodeId, Predicate, Parameters, Result) :-
-    registered_code(CodeId, Version, Hash, _Code),
+    aether_lookup(CodeId, _),
+    latest_registered_code(CodeId, Version, Hash, Code),
+    length(Parameters, Arity),
+    memberchk(Predicate/Arity, Code),
     Goal =.. [Predicate|Parameters],
     call(Goal),
     Result = execution_result(CodeId, Version, Hash, Goal).
+
+latest_registered_code(CodeId, Version, Hash, Code) :-
+    findall(V-(H-C), registered_code(CodeId, V, H, C), Versions),
+    Versions \= [],
+    keysort(Versions, Sorted),
+    last(Sorted, Version-(Hash-Code)).
 
 next_code_version(CodeId, Version) :-
     findall(V, registered_code(CodeId, V, _, _), Versions),
@@ -409,11 +421,38 @@ state_at(LogicalTime, state(Instances, Events)) :-
     findall(I, (qhdc_instance(I,_,_,_,_,_,_,T,_), logical_time_leq(T, LogicalTime)), Instances),
     findall(E, (event(T2, Inst, Type, Data), logical_time_leq(T2, LogicalTime), E = event(T2,Inst,Type,Data)), Events).
 
-run_from(_LogicalTime, InstanceId, Result) :-
-    qhdc_run_instance(InstanceId),
+run_from(LogicalTime, InstanceId, Result) :-
+    valid_logical_time(LogicalTime),
+    instance_goal_template(InstanceId, GoalTemplate),
+    copy_term(GoalTemplate, Goal),
+    qhdc_instance(InstanceId, Parent, Predicate, Arguments, Inputs,
+                  _OldOutputs, _State, _OldTime, Metadata),
+    retract(qhdc_instance(InstanceId, Parent, Predicate, Arguments, Inputs,
+                          _OldOutputs, _State, _OldTime, Metadata)),
+    assertz(qhdc_instance(InstanceId, Parent, Predicate, Arguments, Inputs,
+                          [], runnable, LogicalTime, Metadata)),
+    retractall(instance_status(InstanceId, _)),
+    assertz(instance_status(InstanceId, runnable)),
+    run_instance_goal(InstanceId, Goal),
     qhdc_complete_instance(InstanceId),
     qhdc_instance(InstanceId, _, _, _, _, Outputs, _, _, _),
     Result = Outputs.
+
+valid_logical_time(time(Tick, Phase)) :-
+    number(Tick),
+    phase_order(Phase, _).
+
+run_instance_goal(InstanceId, Goal) :-
+    set_instance_state(InstanceId, running, time(0,execute)),
+    ( call(Goal) ->
+        update_output_bindings(InstanceId, Goal),
+        set_instance_state(InstanceId, running, time(0,produce)),
+        record_event(time(0,produce), InstanceId, produced, Goal)
+    ; assertz(instance_failed(InstanceId, goal_failed)),
+      record_event(time(0,execute), InstanceId, failed, Goal),
+      set_instance_state(InstanceId, failed, time(0,execute)),
+      fail
+    ).
 
 rewind_to(LogicalTime) :-
     retractall(rewind_point(_)),
@@ -440,7 +479,18 @@ qhdc_gc :-
 qhdc_logical_duration(ExecutionId, Duration) :-
     execution_started(ExecutionId, _),
     execution_finished(ExecutionId, _),
-    Duration = 0.
+    execution_instances(ExecutionId, InstanceIds),
+    findall(Scalar,
+            ( member(InstanceId, InstanceIds),
+              event(time(Tick, Phase), InstanceId, _, _),
+              phase_order(Phase, Order),
+              Scalar is Tick * 8 + Order
+            ),
+            Scalars),
+    Scalars \= [],
+    min_list(Scalars, First),
+    max_list(Scalars, Last),
+    Duration is Last - First.
 
 simulation_wall_time(ExecutionId, Wall) :-
     execution_started(ExecutionId, Start),
@@ -517,7 +567,8 @@ phase_order(continue, 6).
 phase_order(complete, 7).
 phase_order(cleanup, 8).
 
-get_time_seconds(time(T,_), T).
+get_time_seconds(_LogicalTime, Seconds) :-
+    get_time(Seconds).
 
 record_event(LogicalTime, Instance, EventType, Data) :-
     assertz(event(LogicalTime, Instance, EventType, Data)),
