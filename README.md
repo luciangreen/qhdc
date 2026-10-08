@@ -163,6 +163,8 @@ Restore later:
 ```
 
 This is the simplest way to checkpoint one compiled instance and recreate it later.
+The checkpoint includes the instance goal and execution metadata, so a restored
+instance can be run again with `run_from/3`.
 
 ### 7. Inspect event history and time-sliced state
 
@@ -222,8 +224,9 @@ This removes instances whose state is `completed` or `failed`.
 ?- qhdc:simulation_wall_time(ExecutionId, WallSeconds).
 ```
 
-- `qhdc_logical_duration/2` reports the logical duration model used by the simulator
-- `simulation_wall_time/2` reports the measured wall-clock runtime between execution start and finish
+- `qhdc_logical_duration/2` measures the phase distance from the first to last recorded execution event
+- `simulation_wall_time/2` reports wall-clock seconds between execution start and finish
+- `run_from/3` validates a logical-time anchor, resets the instance outputs, and re-runs its saved goal; anchors after `execute` advance replay to the next tick
 
 ### 11. Work with parameter packets and the simulated carrier
 
@@ -364,6 +367,8 @@ Failure and audit facts:
 ```
 
 These facts let you inspect recorded failure conditions and audit-style state after experiments.
+`commit/3` records each instance's outputs at completion. Dependency transfers that
+are attempted before their producer completes are recorded in `causality_error/1`.
 
 ### 16. Query exported constants
 
@@ -373,6 +378,14 @@ These facts let you inspect recorded failure conditions and audit-style state af
 ```
 
 These expose the simulator's currently declared memory model and carrier name.
+
+## Current limitations
+
+- Initial executions use one logical tick (`time(0, Phase)`); automatic multi-tick scheduling is not implemented.
+- `state_at/2` filters currently retained instance records and events by time; it does not reconstruct historical instance snapshots.
+- `replay_from/1` traces matching recorded events but does not restore simulator state.
+- Aether registrations declare predicate names and arities; execution calls predicates already available in the Prolog environment rather than loading or sandboxing code.
+- `compare_ssi_qhdc/3` compares success and the first solution only; it does not compare complete solution sets or side effects.
 
 ## Exported predicate reference
 

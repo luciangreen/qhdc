@@ -77,21 +77,53 @@ test(transfer_integrity_corrupted, [setup(setup_qhdc), fail]) :-
     qhdc_receive_packet(simulated_16k_br, _).
 
 test(code_registry_versioning, [setup(setup_qhdc)]) :-
-    aether_register(code_math, [double/2]),
-    aether_register(code_math, [double/2,add_one/2]),
+    aether_register(code_math, [member/2]),
+    aether_register(code_math, [member/2,append/3]),
     findall(V, registered_code(code_math, V, _, _), Versions),
-    Versions == [1,2].
+    Versions == [1,2],
+    aether_lookup(code_math, [member/2,append/3]),
+    aether_run(code_math, member, [a,[a,b]],
+               execution_result(code_math, 2, _, member(a,[a,b]))).
+
+test(aether_rejects_unregistered_predicate, [setup(setup_qhdc), fail]) :-
+    aether_register(code_math, [double/2]),
+    aether_run(code_math, member, [a,[a,b]], _).
 
 test(code_lookup_failure_recorded, [setup(setup_qhdc), fail]) :-
     aether_lookup(missing_code, _).
 
 test(serialize_restore_instance, [setup(setup_qhdc)]) :-
-    qhdc_compile(plunit_qhdc:pipeline(2,_), Exec),
-    qhdc:execution_instances(Exec, [First|_]),
+    qhdc_compile(plunit_qhdc:double(2,_), Exec),
+    qhdc:execution_instances(Exec, [First]),
     qhdc_serialize_instance(First, S),
     qhdc_delete_instance(First),
     qhdc_restore_instance(S),
-    qhdc_instance(First,_,_,_,_,_,_,_,_).
+    qhdc_instance(First,_,_,_,_,_,_,_,_),
+    run_from(time(0,execute), First, [v(1)-4]).
+
+test(run_from_later_anchor, [setup(setup_qhdc)]) :-
+    qhdc_compile(plunit_qhdc:double(2,_), Exec),
+    qhdc:execution_instances(Exec, [InstanceId]),
+    run_from(time(0,produce), InstanceId, [v(1)-4]),
+    qhdc_instance(InstanceId, _, _, _, _, _, completed, time(1,complete), _).
+
+test(logical_and_wall_duration, [setup(setup_qhdc)]) :-
+    qhdc_run(plunit_qhdc:double(2,_), Result),
+    get_dict(execution, Result, ExecutionId),
+    qhdc_logical_duration(ExecutionId, 6),
+    simulation_wall_time(ExecutionId, Wall),
+    Wall >= 0.
+
+test(completion_commits, [setup(setup_qhdc)]) :-
+    qhdc_run(plunit_qhdc:double(3,_), _),
+    commit(_, [v(1)-6], metadata{logical_time:time(0,complete)}).
+
+test(out_of_order_transfer_causality_fact, [setup(setup_qhdc)]) :-
+    qhdc_compile(plunit_qhdc:(double(2,Intermediate),add_one(Intermediate,_)), Exec),
+    qhdc:execution_instances(Exec, [Producer,_]),
+    qhdc:depends(Consumer, Producer, Parameter),
+    \+ qhdc:transfer_parameter(Producer, Consumer, Parameter),
+    causality_error(causality_violation(Producer, Consumer, Parameter)).
 
 test(time_state_and_replay, [setup(setup_qhdc)]) :-
     qhdc_run(plunit_qhdc:pipeline(2,_), _),
