@@ -1,18 +1,23 @@
 # qhdc
 
+QHDC simulates a query as linked instances, packets and timed events in ordinary
+Prolog. It does not use quantum hardware or high-dimensional vectors; the name
+refers to the design's aims, not to its current computation.
+
+
 Quantum HDC.
 
 ## Repository entry points
 
-- `/home/runner/work/qhdc/qhdc/qhdc.pl` — QHDC runtime and exported predicates
-- `/home/runner/work/qhdc/qhdc/qhdc_tests.pl` — plunit test suite and sample predicates used in examples
+- `qhdc.pl` — QHDC runtime and exported predicates
+- `qhdc_tests.pl` — plunit test suite and sample predicates used in examples
 
 ## Quick start
 
 ### Run the test suite
 
 ```bash
-swipl -q -g "['/home/runner/work/qhdc/qhdc/qhdc_tests.pl'], run_tests, halt"
+swipl -q -g "['qhdc_tests.pl'], run_tests, halt"
 ```
 
 This loads the test file, which in turn loads the QHDC module, runs every plunit test, and exits cleanly.
@@ -26,8 +31,8 @@ swipl
 Then load both the runtime and the sample predicates:
 
 ```prolog
-?- ['/home/runner/work/qhdc/qhdc/qhdc.pl',
-    '/home/runner/work/qhdc/qhdc/qhdc_tests.pl'].
+?- ['qhdc.pl',
+    'qhdc_tests.pl'].
 ```
 
 This gives you the `qhdc` module plus the example predicates from the test file, such as `pipeline/2`, `double/2`, `factorial/2`, and `nested_term/1`.
