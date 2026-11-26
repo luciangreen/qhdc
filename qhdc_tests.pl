@@ -1,6 +1,6 @@
 :- begin_tests(qhdc).
 
-:- use_module('/home/runner/work/qhdc/qhdc/qhdc').
+:- use_module(qhdc).
 
 :- dynamic code_v1/2.
 :- dynamic code_v2/2.
